@@ -1,11 +1,11 @@
 ---
 name: spring-boot-initializr
-version: 1.0.0
 description: Generates Spring Boot projects using the official Spring Initializr API. Fetches live versions and dependencies from start.spring.io. Use when user wants to create a new Spring Boot project with specific dependencies.
-author: DevCodeLog
 license: MIT
+compatibility: Requires python3.8+ and access to the internet
 metadata:
-  allowed-tools: read, write, bash, http_request
+  version: 1.0.0
+allowed-tools: Python Read Write Bash Http
 ---
 
 # Spring Boot Project Generator
