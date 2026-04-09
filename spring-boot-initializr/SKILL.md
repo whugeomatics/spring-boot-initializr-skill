@@ -220,7 +220,7 @@ mv {artifactId} {artifactId}-backup
 
 ## Script Commands Reference
 
-spring-initializr.py commands:
+`scripts/spring-initializr.py` commands:
 
 | Command                    | Purpose                                     |
 |----------------------------|---------------------------------------------|
