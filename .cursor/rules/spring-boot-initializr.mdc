@@ -1,0 +1,147 @@
+---
+description: Generate Spring Boot projects using start.spring.io via the spring-initializr script. Activate when the user asks to scaffold, create, or initialise a new Spring Boot project.
+globs: ["**/*.java", "**/*.kt", "**/*.groovy", "**/pom.xml", "**/build.gradle", "**/build.gradle.kts", "**/settings.gradle", "**/settings.gradle.kts"]
+alwaysApply: false
+---
+
+# Spring Boot Project Generator
+
+## When to activate
+
+Activate this rule whenever the user asks to:
+- Create / generate / scaffold a new Spring Boot project
+- Use start.spring.io or Spring Initializr from the terminal
+- Add dependencies to a new Spring Boot app (web, JPA, security, etc.)
+
+Do NOT activate for questions about an *existing* Spring Boot project.
+
+---
+
+## Script location
+
+```
+spring-boot-initializr/scripts/spring-initializr.py
+```
+
+Install dependencies once:
+
+```bash
+pip install -r spring-boot-initializr/scripts/requirements.txt
+```
+
+---
+
+## Quick generation
+
+```bash
+python spring-boot-initializr/scripts/spring-initializr.py generate \
+  --groupId <group> \
+  --artifactId <artifact> \
+  --dependencies <dep1,dep2,...>
+```
+
+**All other flags are optional** — the script fills in sensible defaults (Gradle, Java 17, latest stable Spring Boot).
+
+---
+
+## Common flags
+
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--type` | `gradle-project` | also `maven-project`, `gradle-project-kotlin` |
+| `--javaVersion` | `17` | check supported values with `--list-versions` |
+| `--language` | `java` | also `kotlin`, `groovy` |
+| `--bootVersion` | latest stable | omit to always get the latest |
+| `--packageName` | derived | strip hyphens/underscores from artifactId |
+| `--output-dir` | current dir | write project to a specific path |
+| `--force` | — | bypass 1-hour metadata cache |
+
+---
+
+## Dependency quick-reference
+
+| User says | Use ID |
+|-----------|--------|
+| REST API, MVC | `web` |
+| Reactive / WebFlux | `webflux` |
+| JPA / Hibernate | `data-jpa` |
+| MySQL | `mysql` |
+| PostgreSQL | `postgresql` |
+| H2 in-memory DB | `h2` |
+| Redis / cache | `data-redis` |
+| MongoDB | `data-mongodb` |
+| Security / login | `security` |
+| OAuth2 client | `oauth2-client` |
+| JWT / resource server | `oauth2-resource-server` |
+| Kafka | `kafka` |
+| RabbitMQ | `amqp` |
+| Batch processing | `batch` |
+| Actuator / monitoring | `actuator` |
+| Lombok | `lombok` |
+| DevTools (hot reload) | `devtools` |
+| Testcontainers | `testcontainers` |
+| Thymeleaf | `thymeleaf` |
+| GraphQL | `graphql` |
+| WebSocket | `websocket` |
+
+> ⚠️ Spring Cloud deps (`cloud-config-client`, `cloud-eureka`, `cloud-gateway`) require a
+> compatible Spring Cloud BOM — check https://spring.io/projects/spring-cloud#overview.
+
+---
+
+## packageName rule
+
+Java package names must be lowercase, no hyphens, no underscores.
+The script auto-derives it, but always double-check:
+
+- `user-service`  → `com.example.userservice`
+- `order_manager` → `com.example.ordermanager`
+
+Override: `--packageName com.example.mypackage`
+
+---
+
+## Exploration commands
+
+```bash
+# What Boot versions are available?
+python spring-boot-initializr/scripts/spring-initializr.py --list-versions
+
+# What dependencies exist?
+python spring-boot-initializr/scripts/spring-initializr.py --list-deps
+python spring-boot-initializr/scripts/spring-initializr.py --list-deps --category web
+
+# Find a dependency by keyword
+python spring-boot-initializr/scripts/spring-initializr.py --search-deps redis
+
+# Validate before generating
+python spring-boot-initializr/scripts/spring-initializr.py --validate-deps web,data-jpa,mysql
+```
+
+---
+
+## Post-generation: DB config snippet
+
+If the project includes `data-jpa` + `mysql` or `postgresql`, remind the user to edit
+`src/main/resources/application.properties`:
+
+```properties
+spring.datasource.url=jdbc:mysql://localhost:3306/{artifactId}
+spring.datasource.username=root
+spring.datasource.password=yourpassword
+spring.jpa.hibernate.ddl-auto=update
+```
+
+---
+
+## Example
+
+User: *"Create a Spring Boot project, group com.acme, artifact order-service, add web, JPA, PostgreSQL, Lombok"*
+
+```bash
+python spring-boot-initializr/scripts/spring-initializr.py generate \
+  --groupId com.acme \
+  --artifactId order-service \
+  --packageName com.acme.orderservice \
+  --dependencies web,data-jpa,postgresql,lombok
+```
