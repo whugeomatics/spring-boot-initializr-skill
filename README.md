@@ -20,7 +20,8 @@ Spring Boot project generator for AI agents — powered by the official Spring I
 
 - 🚀 Generate Spring Boot projects with any combination of Spring starters
 - 🔄 Real-time metadata — always fetches the latest versions and dependencies from start.spring.io
-- ✅ Full validation of dependencies, Java version, and Spring Boot version before calling the API
+- ✅ Validates dependency IDs, compatibility ranges, Java version, Spring Boot version, and package name before calling
+  the API
 - 🛠️ Supports Maven, Gradle Groovy DSL, and Gradle Kotlin DSL
 - 📦 Auto-extracts the generated ZIP; skips extraction safely if directory already exists
 - 💡 Smart suggestions for mistyped dependency IDs
@@ -66,8 +67,6 @@ cp -r spring-boot-initializr ~/.agents/skills/spring-boot-initializr
 cp -r spring-boot-initializr ~/.claude/skills/spring-boot-initializr
 ```
 
-Or install via the Claude Code plugin marketplace — see [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json).
-
 ### Cursor
 
 Copy the bundled Cursor rule into your project:
@@ -92,7 +91,7 @@ directly from the terminal.
 ### Generate a Project
 
 ```bash
-# Minimal — all defaults (Gradle, Java 17, latest stable Boot)
+# Minimal — live metadata defaults with script fallbacks (Gradle, Java 17, metadata default Boot)
 python spring-boot-initializr/scripts/spring-initializr.py generate \
   --groupId com.example \
   --artifactId my-app \
@@ -115,7 +114,7 @@ python spring-boot-initializr/scripts/spring-initializr.py generate \
 The script will:
 
 1. Fetch metadata (from 1-hour cache or live from API)
-2. Validate all parameters against live metadata
+2. Validate parameters against live metadata, including dependency compatibility ranges
 3. Call `GET https://start.spring.io/starter.zip`
 4. Extract the project to `{output-dir}/{artifactId}/` (or keep the ZIP if the directory is not empty)
 
@@ -177,8 +176,6 @@ spring-boot-initializr-skill/
 ├── .cursor/
 │   └── rules/
 │       └── spring-boot-initializr.mdc   # Cursor agent rule
-├── .claude-plugin/
-│   └── marketplace.json             # Claude Code plugin marketplace manifest
 ├── LICENSE
 └── README.md
 ```
@@ -187,13 +184,14 @@ spring-boot-initializr-skill/
 
 ## Error Handling
 
-| Error                         | Cause                        | Fix                                                  |
-|-------------------------------|------------------------------|------------------------------------------------------|
-| `Invalid dependencies: xyz`   | Unknown dependency ID        | Run `--search-deps xyz` for suggestions              |
-| `Java X not supported`        | Java version not in metadata | Run `--list-versions`                                |
-| `Version X.Y.Z not available` | Boot version not in metadata | Run `--list-versions`                                |
-| `Failed to fetch metadata`    | Network issue                | Check connectivity; cached data used if < 1 hour old |
-| `Directory already exists`    | Extract target not empty     | Rename or use `--output-dir`                         |
+| Error                         | Cause                                             | Fix                                                  |
+|-------------------------------|---------------------------------------------------|------------------------------------------------------|
+| `Invalid dependencies: xyz`   | Unknown dependency ID                             | Run `--search-deps xyz` for suggestions              |
+| `Incompatible dependencies`   | Dependency does not support selected Boot version | Use `--list-versions` or omit `--bootVersion`        |
+| `Java X not supported`        | Java version not in metadata                      | Run `--list-versions`                                |
+| `Version X.Y.Z not available` | Boot version not in metadata                      | Run `--list-versions`                                |
+| `Failed to fetch metadata`    | Network issue                                     | Check connectivity; cached data used if < 1 hour old |
+| `Directory already exists`    | Extract target not empty                          | Rename or use `--output-dir`                         |
 
 ---
 
@@ -201,6 +199,7 @@ spring-boot-initializr-skill/
 
 | Version   | Summary                                                                                                                                                                                                                                                                                            |
 |-----------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **1.3.0** | Read defaults from live metadata when available; validate dependency compatibility ranges and package names; add safe ZIP extraction; use ASCII CLI status output; clarify script path resolution and Spring Cloud BOM guidance                                                                    |
 | **1.2.0** | Fixed retry backoff consistency; fixed `suggest_alternatives` case sensitivity and fuzzy-match false positives; fixed `HTTPError` handling (`e.response` vs bare `response`); removed non-standard `-dep` alias; added `--output-dir`; added Cursor rule; added Claude plugin marketplace manifest |
 | 1.1.0     | Fixed `packageName` hyphen/underscore stripping; removed hardcoded Java versions; added `websocket` to mapping; Spring Cloud BOM warning; corrected `description` default                                                                                                                          |
 | 1.0.0     | Initial release                                                                                                                                                                                                                                                                                    |

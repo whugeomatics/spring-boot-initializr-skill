@@ -4,7 +4,7 @@ description: Generates Spring Boot projects using the official Spring Initializr
 license: MIT
 compatibility: Requires python3.8+ and internet access
 metadata:
-  version: 1.2.0
+  version: 1.3.0
 allowed-tools: Python Read Write Bash Http
 ---
 
@@ -15,7 +15,7 @@ allowed-tools: Python Read Write Bash Http
 This skill generates Spring Boot project skeletons using the official Spring Initializr API. Always fetches the latest
 available Spring Boot versions and dependencies from start.spring.io.
 
-**Important:** The `generate` command automatically fetches live metadata and validates all parameters. Separate
+**Important:** The `generate` command automatically fetches live metadata and validates project parameters. Separate
 metadata fetching is only needed when users ask exploratory questions (e.g., "what versions are available?").
 
 The skill parses the Spring Initializr metadata API response, which provides:
@@ -48,9 +48,10 @@ Do NOT activate for:
 ### Step 1: Collect Project Configuration
 
 Gather required information through conversation. groupId and artifactId are strongly recommended — ask for them if
-not provided, or offer to use defaults. All other fields fall back to API defaults automatically.
+not provided, or offer to use defaults. Other fields fall back to live metadata defaults when the API exposes them,
+with conservative script fallbacks only when metadata does not provide a default.
 
-| Field        | Recommended | API Default                                                   | Example                      |
+| Field        | Recommended | Default                                                       | Example                      |
 |--------------|-------------|---------------------------------------------------------------|------------------------------|
 | type         | No          | gradle-project                                                | maven-project                |
 | groupId      | **Yes**     | com.example                                                   | com.mycompany                |
@@ -62,7 +63,7 @@ not provided, or offer to use defaults. All other fields fall back to API defaul
 | packaging    | No          | jar                                                           | jar                          |
 | javaVersion  | No          | 17                                                            | 21                           |
 | language     | No          | java                                                          | kotlin                       |
-| bootVersion  | No          | **Latest stable (fetched live)**                              | 4.0.5                        |
+| bootVersion  | No          | Metadata default (fetched live)                               | omit unless a version is required |
 | dependencies | No          | empty                                                         | web,data-jpa,mysql           |
 
 > ⚠️ **packageName rule**: Java package names must be lowercase with no hyphens or underscores.
@@ -73,6 +74,9 @@ not provided, or offer to use defaults. All other fields fall back to API defaul
 
 Only use this step when the user explicitly asks about available versions or dependencies. Do NOT run these before
 every project generation.
+
+Resolve `scripts/spring-initializr.py` relative to this `SKILL.md` file. If the skill is installed at
+`~/.agents/skills/spring-boot-initializr`, run commands from that directory or use the absolute script path.
 
 List available Spring Boot versions:
 
@@ -101,7 +105,7 @@ python scripts/spring-initializr.py --search-deps mysql
 Check if a specific version is available:
 
 ```bash
-python scripts/spring-initializr.py --check-version 4.0.5
+python scripts/spring-initializr.py --check-version <version>
 ```
 
 Validate dependencies before generation (optional early check):
@@ -147,9 +151,9 @@ Based on API metadata categories, map user requests to dependency IDs:
 | Spring Cloud     | service discovery, Eureka ⚠️          | cloud-eureka           |
 | Spring Cloud     | API gateway ⚠️                        | cloud-gateway          |
 
-> ⚠️ **Spring Cloud note**: Spring Cloud dependencies require a compatible Spring Cloud BOM. After generation, verify
-> that `pom.xml` / `build.gradle` includes the correct `spring-cloud-dependencies` version aligned with your Spring
-> Boot version. See: https://spring.io/projects/spring-cloud#overview
+> ⚠️ **Spring Cloud note**: Spring Initializr normally adds the compatible Spring Cloud BOM for selected Cloud
+> dependencies. Re-check https://spring.io/projects/spring-cloud#overview if you manually change Spring Boot or
+> Spring Cloud versions after generation.
 
 > ℹ️ `spring-boot-starter-test` is automatically included in all generated projects — no need to add it manually.
 
@@ -158,7 +162,7 @@ Based on API metadata categories, map user requests to dependency IDs:
 Use the Python script to generate the project. The script automatically:
 
 - Reads from a 1-hour local metadata cache (or fetches live if expired / `--force`)
-- Validates dependencies, Java version, and Spring Boot version
+- Validates dependency IDs, dependency compatibility ranges, Java version, Spring Boot version, and package name
 - Calls the API and downloads the ZIP file
 - **If the target directory `{artifactId}` does not exist or is empty**:
     - Extracts the project into a subdirectory named `{artifactId}`
@@ -167,7 +171,7 @@ Use the Python script to generate the project. The script automatically:
     - Skips auto-extraction to avoid overwriting
     - Keeps the ZIP file and prints manual extraction instructions
 
-Minimal invocation (uses all defaults — Gradle, Java 17, latest stable Boot):
+Minimal invocation (uses live metadata defaults; script fallbacks are Gradle, Java 17, latest metadata default Boot):
 
 ```bash
 python scripts/spring-initializr.py generate \
@@ -190,7 +194,7 @@ python scripts/spring-initializr.py generate \
   --packaging jar \
   --javaVersion 17 \
   --language java \
-  --bootVersion 4.0.5 \
+  --bootVersion <version> \
   --dependencies web,data-jpa,mysql
 ```
 
@@ -286,12 +290,8 @@ Run `--search-deps xyz` or `--list-deps` to find the correct ID. The script also
 
 ⚠️ Version X.Y.Z not available
 
-Run `--list-versions` to see the current list (the list below is a snapshot — always prefer live data):
-
-- `4.1.0-SNAPSHOT` (snapshot)
-- `4.1.0-M4` (milestone)
-- `4.0.5` (latest stable ✅)
-- `3.5.13` (maintenance)
+Run `--list-versions` to see the current list. Do not rely on static version examples because Spring Boot versions
+change frequently.
 
 ### Missing Required Fields
 
@@ -399,7 +399,7 @@ Follow your agent's skill / instruction-file installation guide. Point the agent
    `~/.cache/spring-initializr-skill/metadata.json`. The cache is used automatically on subsequent
    calls. Use `--force` to bypass it and fetch fresh data from start.spring.io.
 
-3. **Validate when helpful** — Use `--validate-deps` before generation to catch typos early.
+3. **Validate when helpful** — Use `--validate-deps` before generation to catch typos and compatibility issues early.
 
 4. **Spring Boot 4.x requires Java 17+.**
 
@@ -407,9 +407,9 @@ Follow your agent's skill / instruction-file installation guide. Point the agent
    derives the default packageName by stripping `-` and `_` from artifactId. Override with
    `--packageName` if you need a custom package structure.
 
-6. **Spring Cloud BOM** — Projects with Spring Cloud dependencies need a compatible
-   `spring-cloud-dependencies` BOM entry. Check the version matrix at
-   https://spring.io/projects/spring-cloud#overview.
+6. **Spring Cloud BOM** — Spring Initializr normally adds the compatible Spring Cloud BOM for selected Cloud
+   dependencies. Re-check the version matrix at https://spring.io/projects/spring-cloud#overview if you manually
+   change Spring Boot or Spring Cloud versions after generation.
 
 ## License
 

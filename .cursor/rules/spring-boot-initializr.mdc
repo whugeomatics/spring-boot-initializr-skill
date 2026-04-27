@@ -23,6 +23,9 @@ Do NOT activate for questions about an *existing* Spring Boot project.
 spring-boot-initializr/scripts/spring-initializr.py
 ```
 
+Resolve this path relative to the installed skill or repository root. If Cursor is working in a different project,
+use the absolute path to the installed script.
+
 Install dependencies once:
 
 ```bash
@@ -40,7 +43,8 @@ python spring-boot-initializr/scripts/spring-initializr.py generate \
   --dependencies <dep1,dep2,...>
 ```
 
-**All other flags are optional** — the script fills in sensible defaults (Gradle, Java 17, latest stable Spring Boot).
+**All other flags are optional** — the script reads live metadata defaults when available, with conservative fallbacks
+(Gradle, Java 17, latest metadata default Spring Boot).
 
 ---
 
@@ -51,7 +55,7 @@ python spring-boot-initializr/scripts/spring-initializr.py generate \
 | `--type` | `gradle-project` | also `maven-project`, `gradle-project-kotlin` |
 | `--javaVersion` | `17` | check supported values with `--list-versions` |
 | `--language` | `java` | also `kotlin`, `groovy` |
-| `--bootVersion` | latest stable | omit to always get the latest |
+| `--bootVersion` | metadata default | omit to use the live metadata default |
 | `--packageName` | derived | strip hyphens/underscores from artifactId |
 | `--output-dir` | current dir | write project to a specific path |
 | `--force` | — | bypass 1-hour metadata cache |
@@ -84,8 +88,9 @@ python spring-boot-initializr/scripts/spring-initializr.py generate \
 | GraphQL | `graphql` |
 | WebSocket | `websocket` |
 
-> ⚠️ Spring Cloud deps (`cloud-config-client`, `cloud-eureka`, `cloud-gateway`) require a
-> compatible Spring Cloud BOM — check https://spring.io/projects/spring-cloud#overview.
+> Spring Initializr normally adds the compatible Spring Cloud BOM for selected Cloud deps
+> (`cloud-config-client`, `cloud-eureka`, `cloud-gateway`). Re-check
+> https://spring.io/projects/spring-cloud#overview if versions are changed manually after generation.
 
 ---
 
@@ -117,6 +122,8 @@ python spring-boot-initializr/scripts/spring-initializr.py --search-deps redis
 # Validate before generating
 python spring-boot-initializr/scripts/spring-initializr.py --validate-deps web,data-jpa,mysql
 ```
+
+Validation checks dependency IDs and compatibility with the current metadata default Spring Boot version.
 
 ---
 

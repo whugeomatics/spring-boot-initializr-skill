@@ -9,8 +9,9 @@ import sys
 import time
 import argparse
 import zipfile
+import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timedelta
 
 try:
@@ -21,7 +22,7 @@ except ImportError:
     sys.exit(1)
 
 INITIALIZR_URL = "https://start.spring.io"
-USER_AGENT = "spring-boot-initializr-skill/1.2"
+USER_AGENT = "spring-boot-initializr-skill/1.3"
 METADATA_HEADERS = {
     "Accept": "application/vnd.initializr.v2.2+json",
     "User-Agent": USER_AGENT,
@@ -85,14 +86,14 @@ def fetch_metadata(force_refresh: bool = False, max_retries: int = 3) -> Optiona
         except requests.exceptions.Timeout:
             wait = 2 ** attempt
             if attempt < max_retries - 1:
-                print(f"Timeout, retrying in {wait}s… ({attempt + 1}/{max_retries})", file=sys.stderr)
+                print(f"Timeout, retrying in {wait}s... ({attempt + 1}/{max_retries})", file=sys.stderr)
                 time.sleep(wait)
             else:
                 print(f"Timeout after {max_retries} attempts.", file=sys.stderr)
         except requests.exceptions.RequestException as e:
             wait = 2 ** attempt  # FIX B1: consistent exponential backoff for all errors
             if attempt < max_retries - 1:
-                print(f"Request failed ({e}), retrying in {wait}s… ({attempt + 1}/{max_retries})", file=sys.stderr)
+                print(f"Request failed ({e}), retrying in {wait}s... ({attempt + 1}/{max_retries})", file=sys.stderr)
                 time.sleep(wait)
             else:
                 print(f"Failed to fetch metadata: {e}", file=sys.stderr)
@@ -107,8 +108,13 @@ def get_available_versions(metadata: Dict) -> List[Dict]:
     return metadata.get("bootVersion", {}).get("values", [])
 
 
+def get_metadata_default(metadata: Dict, field: str, fallback: str) -> str:
+    value = metadata.get(field, {}).get("default")
+    return str(value) if value else fallback
+
+
 def get_latest_version(metadata: Dict) -> str:
-    return metadata.get("bootVersion", {}).get("default", "4.0.5")
+    return get_metadata_default(metadata, "bootVersion", "")
 
 
 def get_java_versions(metadata: Dict) -> List[str]:
@@ -130,8 +136,9 @@ def flatten_dependencies(metadata: Dict) -> List[Dict]:
     result = []
     for category in get_dependencies(metadata):
         for dep in category.get("values", []):
-            dep["category"] = category.get("name", "Unknown")
-            result.append(dep)
+            item = dict(dep)
+            item["category"] = category.get("name", "Unknown")
+            result.append(item)
     return result
 
 
@@ -148,6 +155,60 @@ def search_dependencies(metadata: Dict, query: str) -> List[Dict]:
 def validate_dependencies(metadata: Dict, dep_ids: List[str]) -> Tuple[List[str], List[str]]:
     valid_ids = {d["id"] for d in flatten_dependencies(metadata)}
     return [d for d in dep_ids if d in valid_ids], [d for d in dep_ids if d not in valid_ids]
+
+
+def parse_version(version: str) -> Tuple[int, ...]:
+    return tuple(int(part) for part in re.findall(r"\d+", version)[:4])
+
+
+def compare_versions(left: str, right: str) -> int:
+    left_parts = parse_version(left)
+    right_parts = parse_version(right)
+    max_len = max(len(left_parts), len(right_parts), 1)
+    left_parts += (0,) * (max_len - len(left_parts))
+    right_parts += (0,) * (max_len - len(right_parts))
+    return (left_parts > right_parts) - (left_parts < right_parts)
+
+
+def version_in_range(version: str, range_expr: str) -> bool:
+    match = re.match(r"^([\[\(])\s*([^,]*)\s*,\s*([^\]\)]*)\s*([\]\)])$", range_expr)
+    if not match:
+        return True
+
+    lower_inclusive = match.group(1) == "["
+    lower = match.group(2)
+    upper = match.group(3)
+    upper_inclusive = match.group(4) == "]"
+
+    if lower:
+        cmp_lower = compare_versions(version, lower)
+        if cmp_lower < 0 or (cmp_lower == 0 and not lower_inclusive):
+            return False
+    if upper:
+        cmp_upper = compare_versions(version, upper)
+        if cmp_upper > 0 or (cmp_upper == 0 and not upper_inclusive):
+            return False
+    return True
+
+
+def validate_dependency_compatibility(
+    metadata: Dict,
+    dep_ids: List[str],
+    boot_version: str,
+) -> List[str]:
+    if not boot_version:
+        return []
+
+    dependency_by_id = {d["id"]: d for d in flatten_dependencies(metadata)}
+    incompatible = []
+    for dep_id in dep_ids:
+        dep = dependency_by_id.get(dep_id)
+        if not dep:
+            continue
+        range_expr = dep.get("compatibilityRange")
+        if range_expr and not version_in_range(boot_version, range_expr):
+            incompatible.append(f"{dep_id} requires Spring Boot {range_expr}")
+    return incompatible
 
 
 def suggest_alternatives(metadata: Dict, invalid_dep: str) -> List[str]:
@@ -202,7 +263,7 @@ def display_version_info(metadata: Dict) -> None:
         marker = "-> " if v["id"] == latest else "   "
         print(f"{marker}{v['id']:<22} {v.get('name', v['id'])}")
     if len(versions) > 15:
-        print(f"   … and {len(versions) - 15} more (use --fetch-metadata for the full list)")
+        print(f"   ... and {len(versions) - 15} more (use --fetch-metadata for the full list)")
 
 
 def display_dependencies(metadata: Dict, category: Optional[str] = None) -> None:
@@ -220,7 +281,7 @@ def display_dependencies(metadata: Dict, category: Optional[str] = None) -> None
             desc     = dep.get("description", "")
             print(f"  {dep_id:<30} {dep_name}")
             if desc:
-                print(f"    └─ {desc[:85]}{'…' if len(desc) > 85 else ''}")
+                print(f"    - {desc[:85]}{'...' if len(desc) > 85 else ''}")
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +300,49 @@ def derive_package_name(group_id: str, artifact_id: str) -> str:
     return f"{group_id}.{safe}"
 
 
+def validate_package_name(package_name: str) -> Tuple[bool, Optional[str]]:
+    package_re = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9]*)*$")
+    if package_re.match(package_name):
+        return True, None
+    return False, (
+        f"Invalid packageName '{package_name}'. Use lowercase Java package segments "
+        "starting with a letter, using only letters and digits, separated by dots."
+    )
+
+
+def safe_extract(zip_file: zipfile.ZipFile, destination: Path) -> None:
+    destination = destination.resolve()
+    for member in zip_file.infolist():
+        target = (destination / member.filename).resolve()
+        if destination != target and destination not in target.parents:
+            raise OSError(f"Unsafe ZIP entry path: {member.filename}")
+    zip_file.extractall(destination)
+
+
+def build_params(metadata: Dict[str, Any], config: Dict[str, str], deps: List[str]) -> Dict[str, str]:
+    group_id = config.get("groupId", get_metadata_default(metadata, "groupId", "com.example"))
+    artifact_id = config.get("artifactId", get_metadata_default(metadata, "artifactId", "demo"))
+    package_name = config.get("packageName") or derive_package_name(group_id, artifact_id)
+
+    return {
+        "type": config.get("type", get_metadata_default(metadata, "type", "gradle-project")),
+        "groupId": group_id,
+        "artifactId": artifact_id,
+        "version": config.get("version", get_metadata_default(metadata, "version", "0.0.1-SNAPSHOT")),
+        "name": config.get("name", artifact_id),
+        "description": config.get(
+            "description",
+            get_metadata_default(metadata, "description", "Spring Boot application"),
+        ),
+        "packageName": package_name,
+        "packaging": config.get("packaging", get_metadata_default(metadata, "packaging", "jar")),
+        "javaVersion": config.get("javaVersion", get_metadata_default(metadata, "javaVersion", "17")),
+        "language": config.get("language", get_metadata_default(metadata, "language", "java")),
+        "bootVersion": config.get("bootVersion", get_latest_version(metadata)),
+        "dependencies": ",".join(deps),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Project generation
 # ---------------------------------------------------------------------------
@@ -251,14 +355,17 @@ def generate_project(
     if not metadata:
         return False, "Failed to fetch metadata. Please check your network connection.", None, None
 
+    group_id = config.get("groupId", get_metadata_default(metadata, "groupId", "com.example"))
+    artifact_id = config.get("artifactId", get_metadata_default(metadata, "artifactId", "demo"))
+    boot_version = config.get("bootVersion") or get_latest_version(metadata)
+    java_version = config.get("javaVersion") or get_metadata_default(metadata, "javaVersion", "17")
+
     # Validate Spring Boot version
-    boot_version = config.get("bootVersion")
     if boot_version and not check_version_available(metadata, boot_version):
         latest = get_latest_version(metadata)
-        return False, f"Version '{boot_version}' not available. Latest stable: {latest}", None, None
+        return False, f"Version '{boot_version}' not available. Metadata default: {latest}", None, None
 
     # Validate Java version
-    java_version = config.get("javaVersion")
     if java_version:
         ok, err = validate_java_version(metadata, java_version)
         if not ok:
@@ -273,27 +380,18 @@ def generate_project(
             hints = []
             for inv in invalid:
                 sugg = suggest_alternatives(metadata, inv)
-                hints.append(f"  '{inv}'" + (f" → did you mean: {', '.join(sugg)}?" if sugg else ""))
+                hints.append(f"  '{inv}'" + (f" -> did you mean: {', '.join(sugg)}?" if sugg else ""))
             return False, "Invalid dependencies:\n" + "\n".join(hints), None, None
+        incompatible = validate_dependency_compatibility(metadata, deps, boot_version)
+        if incompatible:
+            return False, "Incompatible dependencies:\n" + "\n".join(f"  {item}" for item in incompatible), None, None
 
-    group_id    = config.get("groupId",    "com.example")
-    artifact_id = config.get("artifactId", "demo")
+    params = build_params(metadata, config, deps)
+    ok, err = validate_package_name(params["packageName"])
+    if not ok:
+        return False, err, None, None
 
-    params: Dict[str, str] = {
-        "type":        config.get("type",        "gradle-project"),
-        "groupId":     group_id,
-        "artifactId":  artifact_id,
-        "version":     config.get("version",     "0.0.1-SNAPSHOT"),
-        "name":        config.get("name",        artifact_id),
-        "description": config.get("description", "Spring Boot application"),
-        "packageName": config.get("packageName") or derive_package_name(group_id, artifact_id),
-        "packaging":   config.get("packaging",   "jar"),
-        "javaVersion": java_version or "17",
-        "language":    config.get("language",    "java"),
-        "bootVersion": boot_version or get_latest_version(metadata),
-        "dependencies": ",".join(deps),
-    }
-    # Remove truly empty values (e.g. empty dependencies string → API uses no deps)
+    # Remove truly empty values (e.g. empty dependencies string -> API uses no deps)
     params = {k: v for k, v in params.items() if v}
 
     try:
@@ -334,7 +432,7 @@ def generate_project(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Spring Boot Project Generator — powered by start.spring.io",
+        description="Spring Boot Project Generator - powered by start.spring.io",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -361,7 +459,7 @@ Examples:
 """,
     )
 
-    # ── Exploration commands ────────────────────────────────────────────────
+    # Exploration commands
     parser.add_argument("--fetch-metadata", action="store_true",
                         help="Fetch and print full metadata JSON")
     parser.add_argument("--list-versions",  action="store_true",
@@ -379,11 +477,11 @@ Examples:
     parser.add_argument("--force",          action="store_true",
                         help="Bypass local metadata cache and fetch fresh data")
 
-    # ── Generate subcommand ─────────────────────────────────────────────────
+    # Generate subcommand
     parser.add_argument("generate", nargs="?",
                         help="Generate a Spring Boot project (requires --groupId and --artifactId)")
 
-    # ── Project configuration ───────────────────────────────────────────────
+    # Project configuration
     parser.add_argument("--type",
                         choices=["maven-project", "gradle-project", "gradle-project-kotlin"],
                         help="Build tool (default: gradle-project)")
@@ -407,7 +505,7 @@ Examples:
     parser.add_argument("--language",     "-l", choices=["java", "kotlin", "groovy"],
                         help="Programming language (default: java)")
     parser.add_argument("--bootVersion",  "-b", metavar="VER",
-                        help="Spring Boot version (default: latest stable, fetched live)")
+                        help="Spring Boot version (default: live metadata default)")
     # FIX B6: removed non-standard "-dep" short alias
     parser.add_argument("--dependencies", metavar="IDS",
                         help="Comma-separated dependency IDs, e.g. web,data-jpa,mysql")
@@ -418,7 +516,7 @@ Examples:
 
     output_dir = Path(args.output_dir).resolve() if args.output_dir else Path.cwd()
 
-    # ── Dispatch exploration commands ────────────────────────────────────────
+    # Dispatch exploration commands
     if args.fetch_metadata:
         meta = fetch_metadata(force_refresh=args.force)
         if meta:
@@ -459,7 +557,7 @@ Examples:
                 desc = dep.get("description", "")
                 print(f"  {dep['id']:<30} [{dep.get('category', '?')}]  {dep.get('name', '')}")
                 if desc:
-                    print(f"    {desc[:85]}{'…' if len(desc) > 85 else ''}")
+                    print(f"    {desc[:85]}{'...' if len(desc) > 85 else ''}")
         else:
             print(f"No dependencies found matching '{args.search_deps}'.")
         return
@@ -472,14 +570,19 @@ Examples:
         dep_list = [d.strip() for d in args.validate_deps.split(",") if d.strip()]
         valid, invalid = validate_dependencies(meta, dep_list)
         if valid:
-            print(f"✅ Valid:   {', '.join(valid)}")
+            print(f"OK Valid:   {', '.join(valid)}")
         if invalid:
-            print(f"❌ Invalid: {', '.join(invalid)}")
+            print(f"ERROR Invalid: {', '.join(invalid)}")
             for inv in invalid:
                 sugg = suggest_alternatives(meta, inv)
                 if sugg:
-                    print(f"   '{inv}' → did you mean: {', '.join(sugg)}?")
-        if not invalid:
+                    print(f"   '{inv}' -> did you mean: {', '.join(sugg)}?")
+        compatible_errors = validate_dependency_compatibility(meta, valid, get_latest_version(meta))
+        if compatible_errors:
+            print("ERROR Incompatible with metadata default Spring Boot version:")
+            for item in compatible_errors:
+                print(f"   {item}")
+        if not invalid and not compatible_errors:
             print("All dependencies are valid.")
         return
 
@@ -489,20 +592,20 @@ Examples:
             print("Failed to fetch metadata.", file=sys.stderr)
             sys.exit(1)
         if check_version_available(meta, args.check_version):
-            print(f"✅ Version {args.check_version} is available.")
+            print(f"OK Version {args.check_version} is available.")
         else:
-            print(f"❌ Version {args.check_version} is not available.")
+            print(f"ERROR Version {args.check_version} is not available.")
             display_version_info(meta)
         return
 
-    # ── Generate project ─────────────────────────────────────────────────────
+    # Generate project
     # FIX B5: require BOTH groupId AND artifactId to trigger without the 'generate' keyword
     if args.generate == "generate" or (args.groupId and args.artifactId):
         if not args.groupId:
-            print("❌ Missing --groupId  (e.g. --groupId com.example)", file=sys.stderr)
+            print("ERROR Missing --groupId  (e.g. --groupId com.example)", file=sys.stderr)
             sys.exit(1)
         if not args.artifactId:
-            print("❌ Missing --artifactId  (e.g. --artifactId my-app)", file=sys.stderr)
+            print("ERROR Missing --artifactId  (e.g. --artifactId my-app)", file=sys.stderr)
             sys.exit(1)
 
         config = {k: v for k, v in {
@@ -528,14 +631,14 @@ Examples:
             zip_path = output_dir / f"{artifact_id}.zip"
             try:
                 zip_path.write_bytes(content)
-                print(f"📦 ZIP saved: {zip_path}")
+                print(f"ZIP saved: {zip_path}")
             except OSError as e:
-                print(f"❌ Cannot write ZIP: {e}", file=sys.stderr)
+                print(f"ERROR Cannot write ZIP: {e}", file=sys.stderr)
                 sys.exit(1)
 
             extract_dir = output_dir / artifact_id
             if extract_dir.exists() and any(extract_dir.iterdir()):
-                print(f"⚠️  '{extract_dir}' already exists and is not empty — skipping auto-extract.",
+                print(f"WARNING '{extract_dir}' already exists and is not empty - skipping auto-extract.",
                       file=sys.stderr)
                 print(f"   Manual extract:  unzip {zip_path} -d {extract_dir}-new", file=sys.stderr)
                 print(f"   Or rename first: mv {extract_dir} {extract_dir}-backup", file=sys.stderr)
@@ -543,12 +646,12 @@ Examples:
                 try:
                     extract_dir.mkdir(parents=True, exist_ok=True)
                     with zipfile.ZipFile(zip_path, "r") as zf:
-                        zf.extractall(extract_dir)
+                        safe_extract(zf, extract_dir)
                     zip_path.unlink()
-                    print(f"✅ Extracted to: {extract_dir.resolve()}")
+                    print(f"OK Extracted to: {extract_dir.resolve()}")
                     print(f"\nNext steps:\n  cd {extract_dir}")
                 except (zipfile.BadZipFile, OSError) as e:
-                    print(f"❌ Extraction failed: {e}", file=sys.stderr)
+                    print(f"ERROR Extraction failed: {e}", file=sys.stderr)
                     print(f"   ZIP preserved at: {zip_path}", file=sys.stderr)
                     sys.exit(1)
 
